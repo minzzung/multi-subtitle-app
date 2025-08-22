@@ -1,0 +1,33 @@
+cat > .gitignore << 'EOF'
+# 가상환경/환경변수
+venv/
+.venv/
+.env
+.env.*
+
+# 파이썬 캐시/컴파일
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 임시/상태/작업 결과
+input/
+output/
+status/
+storage/
+*.log
+
+# IDE 설정
+.vscode/
+.idea/
+
+# OS 자동 파일
+.DS_Store
+Thumbs.db
+
+# 대용량 미디어(필요시만 올리세요)
+*.mp4
+*.mkv
+*.wav
+*.mp3
+EOF

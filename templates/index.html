@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Multi Subtitle App</title>
+  <link rel="stylesheet" href="/static/css/style.css"/>
+</head>
+<body>
+  <header>
+    <div class="branding">
+      <h1>Multi Subtitle App</h1>
+      <p>Upload → Auto Subtitles (Whisper: Korean only) → AI-correction → Translate → Streaming glossary.</p>
+    </div>
+    <div class="eco" aria-label="Eco Mileage">
+      <span class="emoji" aria-hidden="true">🌿</span>
+      <span class="label">Eco Mileage</span>
+      <span id="ecoPoints" class="points">0 pts</span>
+    </div>
+  </header>
+
+  <main class="grid">
+    <!-- Left -->
+    <section class="panel left" id="uploader">
+      <h2>1) Upload & Options</h2>
+
+      <div id="dropzone" class="dropzone" tabindex="0" aria-label="Drop video here">
+        <p>Drag & drop video here<br/><small>(Max {{ max_size }} MB)</small></p>
+        <input type="file" id="fileInput" accept="video/*"/>
+      </div>
+
+      <!-- Whisper 경로: 체크한 만큼 생성 -->
+      <label class="block">Target subtitle languages (체크한 만큼 생성):</label>
+      <div id="langOptionsA" class="lang-grid">
+        <label><input type="checkbox" class="langOptA" value="en" checked> English (영어)</label>
+        <label><input type="checkbox" class="langOptA" value="zh"> Chinese (중국어)</label>
+        <label><input type="checkbox" class="langOptA" value="vi"> Vietnamese (베트남어)</label>
+        <label><input type="checkbox" class="langOptA" value="th"> Thai (태국어)</label>
+        <label><input type="checkbox" class="langOptA" value="uz"> Uzbek (우즈베크어)</label>
+        <label><input type="checkbox" class="langOptA" value="tl"> Filipino / Tagalog (필리핀어)</label>
+        <label><input type="checkbox" class="langOptA" value="ja"> Japanese (일본어)</label>
+        <label><input type="checkbox" class="langOptA" value="ko"> Korean (한국어)</label>
+      </div>
+      <input id="langs" type="hidden" value="en"/>
+      <button id="startBtn">Start (with Whisper)</button>
+
+      <hr class="divider"/>
+
+      <!-- Skip-Whisper (영상+SRT 업로드) -->
+      <div class="subupload">
+        <h3>Upload Video + SRT (Skip Whisper)</h3>
+        <label>Video file</label>
+        <input type="file" id="fileInput2Video" accept="video/*"/>
+        <label>SRT file</label>
+        <input type="file" id="fileInput2Srt" accept=".srt,text/plain"/>
+
+        <div class="row">
+          <label for="srtLang">SRT language:</label>
+          <select id="srtLang">
+            <option value="ko" selected>한국어 (ko)</option>
+            <option value="en">영어 (en)</option>
+            <option value="zh">중국어 (zh)</option>
+            <option value="vi">베트남어 (vi)</option>
+            <option value="th">태국어 (th)</option>
+            <option value="uz">우즈베크어 (uz)</option>
+            <option value="tl">필리핀어 (tl)</option>
+            <option value="ja">일본어 (ja)</option>
+          </select>
+        </div>
+
+        <label class="block">Target subtitle languages (체크한 만큼 생성):</label>
+        <div id="langOptionsB" class="lang-grid">
+          <label><input type="checkbox" class="langOptB" value="en" checked> English (영어)</label>
+          <label><input type="checkbox" class="langOptB" value="zh"> Chinese (중국어)</label>
+          <label><input type="checkbox" class="langOptB" value="vi"> Vietnamese (베트남어)</label>
+          <label><input type="checkbox" class="langOptB" value="th"> Thai (태국어)</label>
+          <label><input type="checkbox" class="langOptB" value="uz"> Uzbek (우즈베크어)</label>
+          <label><input type="checkbox" class="langOptB" value="tl"> Filipino / Tagalog (필리핀어)</label>
+          <label><input type="checkbox" class="langOptB" value="ja"> Japanese (일본어)</label>
+          <label><input type="checkbox" class="langOptB" value="ko"> Korean (한국어)</label>
+        </div>
+        <input id="langs2" type="hidden" value="en"/>
+
+        <button id="startBtn2">Start (skip Whisper)</button>
+      </div>
+
+      <div class="status">
+        <div id="progressBar"><span id="progressFill" style="width:0%"></span></div>
+        <div id="statusMsg">Waiting…</div>
+      </div>
+    </section>
+
+    <!-- Center -->
+    <section class="panel center">
+      <h2>2) Player</h2>
+      <div class="player-wrap">
+        <video id="video" controls crossorigin="anonymous"></video>
+        <div class="track-controls">
+          <label for="trackLang">Subtitle:</label>
+          <select id="trackLang"></select>
+        </div>
+        <div class="subs-center">
+          <pre id="srtView" class="code"></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- Right -->
+    <section class="panel right">
+      <h2>3) Glossary Stream</h2>
+      <div class="terms"><ul id="termList"></ul></div>
+    </section>
+  </main>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
