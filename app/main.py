@@ -111,18 +111,18 @@ def glossary_api(text: str, lang: str = "en", src_lang: Optional[str] = None):
 @app.post("/upload")
 async def upload(file: UploadFile = File(...),
                  target_langs: str = Form("en"),
-                 asr_model: str = Form("base"),
+                 asr_model: str = Form(CFG.WHISPER_MODEL),
                  src_lang: str = Form("ko")):
     task_id = _new_task_id()
     tdir = _task_dir(task_id)
 
     ext = Path(file.filename or "original.mp4").suffix or ".mp4"
-    dst = tdir / f"original{ext}"
+    dst = (_task_dir(task_id) / f"original{ext}").resolve()   # ← 절대경로
     with dst.open("wb") as out:
         shutil.copyfileobj(file.file, out)
 
     langs = _parse_targets(target_langs)
-    transcribe_and_translate.delay(task_id, str(dst), langs, asr_model, _canon(src_lang))
+    transcribe_and_translate.delay(task_id, str(dst), langs, _canon(asr_model or "base"), _canon(src_lang))
     return JSONResponse({"task_id": task_id, "queued": True, "langs": langs})
 
 # --- 업로드(SRT 동반, Whisper 생략, 다중 타깃) ---
@@ -135,14 +135,14 @@ async def upload_with_srt(video: UploadFile = File(...),
     tdir = _task_dir(task_id)
 
     v_ext = Path(video.filename or "original.mp4").suffix or ".mp4"
-    v_dst = tdir / f"original{v_ext}"
+    v_dst = (_task_dir(task_id) / f"original{v_ext}").resolve()  # ← 절대경로
     with v_dst.open("wb") as out:
         shutil.copyfileobj(video.file, out)
 
-    srt_dst = tdir / "srt" / "uploaded.srt"
+    srt_dst = (_task_dir(task_id) / "srt" / "uploaded.srt").resolve()
     with srt_dst.open("wb") as out:
         shutil.copyfileobj(srt.file, out)
 
-    langs = _parse_targets(target_langs)
     translate_srt_only.delay(task_id, str(srt_dst), _canon(srt_lang), langs)
+
     return JSONResponse({"task_id": task_id, "queued": True, "langs": langs})

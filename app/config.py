@@ -30,12 +30,12 @@ GLOSSARY_ENCODING = os.getenv("GLOSSARY_ENCODING", "auto")
 # ---------- ASR (Whisper) ----------
 # "whisper" | "faster_whisper"
 ASR_BACKEND = os.getenv("ASR_BACKEND", "whisper").lower()  # 기본: openai-whisper
-WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "medium")
 WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "ko")     # 한국어만 추출
 
 # Faster-Whisper 옵션
 # 모델 크기 예: "base", "small", "medium", 경로도 가능
-FASTER_WHISPER_MODEL = os.getenv("FASTER_WHISPER_MODEL", "base")
+FASTER_WHISPER_MODEL = os.getenv("FASTER_WHISPER_MODEL", "medium")
 # compute_type: "auto"(권장), "float16", "int8", "int8_float16", "float32" 등
 FASTER_WHISPER_COMPUTE_TYPE = os.getenv("FASTER_WHISPER_COMPUTE_TYPE", "auto")
 

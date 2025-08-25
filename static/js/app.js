@@ -136,7 +136,7 @@ async function startWhisper() {
   const fd = new FormData();
   fd.append('file', file);
   fd.append('target_langs', langs);
-  fd.append('asr_model', 'base');
+  fd.append('asr_model', 'medium');
   fd.append('src_lang', 'ko');
 
   setStatus('Uploading…');

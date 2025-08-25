@@ -48,7 +48,7 @@ MODEL_MAP = {
     ("en","vi"): "Helsinki-NLP/opus-mt-en-vi",
     ("vi","en"): "Helsinki-NLP/opus-mt-vi-en",
 
-    ("en","ja"): "Helsinki-NLP/opus-mt-en-jap",  # 중요!
+    ("en","ja"): "Helsinki-NLP/opus-mt-en-jap",
     ("ja","en"): "Helsinki-NLP/opus-mt-ja-en",
 
     ("en","th"): "Helsinki-NLP/opus-mt-en-th",
@@ -121,25 +121,24 @@ def _translate_marian(texts: List[str], src: str, tgt: str, max_len=512) -> List
     out = tok.batch_decode(gen, skip_special_tokens=True)
     return out
 
-# ----- 간단 분절기: 긴 줄/구두점 적은 줄 대응 -----
+# ----- 룩비하인드 없는 분절기 (오류 해결) -----
 _KO_BOUND = re.compile(r"(다\.|요\.|[.!?])\s+")
 _EN_BOUND = re.compile(r"([.!?])\s+")
 def _split_heuristic(text: str, lang: str, max_len=160) -> List[str]:
     text = text.strip()
     if not text:
         return [text]
-    lang = (lang or "").strip().lower()
+    lang = _canon(lang)
 
-    # 문장 경계에 줄바꿈을 삽입해서 split (룩비하인드 사용 X)
-    if lang.startswith("ko"):
+    # 문장 경계에 줄바꿈 삽입 → split
+    if lang == "ko":
         txt = _KO_BOUND.sub(r"\1\n", text)
     else:
         txt = _EN_BOUND.sub(r"\1\n", text)
-
     parts = [p.strip() for p in txt.split("\n") if p.strip()]
 
-    # 여전히 너무 긴 파트는 공백 기준으로 추가 쪼개기
-    out = []
+    # 너무 길면 공백 기준 추가 분할
+    out: List[str] = []
     for p in parts:
         if len(p) <= max_len:
             out.append(p)
@@ -147,10 +146,8 @@ def _split_heuristic(text: str, lang: str, max_len=160) -> List[str]:
             out.extend(re.findall(r".{1,%d}(?:\s|$)" % max_len, p))
     return [x.strip() for x in out if x.strip()]
 
-
 def translate_text(texts: List[str], src: str, tgt: str, max_len=512) -> List[str]:
     s, t = _canon(src), _canon(tgt)
-    # 특정 타깃은 M2M 우선 사용(품질)
     prefer_m2m = t in PREFER_M2M_TARGETS and s != t
     out: List[str] = []
     for line in texts:
@@ -171,19 +168,16 @@ def translate_text(texts: List[str], src: str, tgt: str, max_len=512) -> List[st
 
 def translate_text_safe(texts: List[str], src: str, tgt: str, max_len=512) -> List[str]:
     s, t = _canon(src), _canon(tgt)
-    # 1) 직행
     try:
         return translate_text(texts, s, t, max_len)
     except Exception:
         pass
-    # 2) 영어 피벗
     try:
         if s != "en" and t != "en":
             mid = translate_text(texts, s, "en", max_len)
             return translate_text(mid, "en", t, max_len)
     except Exception:
         pass
-    # 3) 최종 폴백
     try:
         return _translate_m2m(texts, s, t, max_len)
     except Exception:

@@ -1,34 +1,14 @@
-# 모든 텍스트 파일을 LF로 강제
-* text=auto eol=lf
-
-# OS/에디터가 헷갈리기 쉬운 확장자도 명시
-*.py   text eol=lf
-*.js   text eol=lf
-*.ts   text eol=lf
-*.json text eol=lf
-*.yml  text eol=lf
-*.yaml text eol=lf
-*.sh   text eol=lf
-*.env* text eol=lf
-*.srt  text eol=lf
-*.vtt  text eol=lf
-*.csv  text eol=lf
-*.md   text eol=lf
-*.html text eol=lf
-*.css  text eol=lf
-
-# 바이너리(줄바꿈 변환 금지)
-*.png binary
-*.jpg binary
-*.jpeg binary
-*.gif binary
-*.webp binary
-*.mp4 binary
-*.mkv binary
-*.wav binary
-*.mp3 binary
-*.zip binary
-*.tar binary
-*.gz  binary
-*.xz  binary
-*.pdf binary
+fastapi==0.116.1
+uvicorn==0.35.0
+jinja2==3.1.6
+python-multipart==0.0.20
+celery==5.4.0
+redis==5.0.7
+openai-whisper==20231117
+srt==3.5.3
+transformers==4.42.4
+sentencepiece==0.2.0
+sacremoses==0.1.1
+langdetect==1.0.9
+python-dotenv==1.0.1
+aiofiles==23.2.1
