@@ -135,74 +135,6 @@ def do_asr(src_path: str, model_size: str = "base") -> List[Tuple[float, float, 
     return transcribe_faster_whisper(src_path, model_size) if (getattr(CFG,"ASR_BACKEND","whisper")=="faster_whisper") \
            else transcribe_whisper(src_path, model_size)
 
-# ---------- 교정(한국어) ----------
-def _load_hanspell():
-    try:
-        from hanspell import spell_checker
-        return spell_checker
-    except Exception:
-        return None
-def _load_pykospacing():
-    try:
-        from pykospacing import Spacing
-        return Spacing()
-    except Exception:
-        return None
-def _load_languagetool_ko():
-    try:
-        import language_tool_python
-        return language_tool_python.LanguageToolPublicAPI("ko-KR")
-    except Exception:
-        return None
-
-def correct_korean_text(text: str, backends: List[str], mode: str="stack") -> str:
-    if not text.strip(): return text
-    cur, changed = text, False
-    pk = _load_pykospacing() if "pykospacing" in backends else None
-    hs = _load_hanspell()    if "hanspell"    in backends else None
-    lt = _load_languagetool_ko() if "lt"      in backends else None
-    def diff(a,b): return (a or "").strip() != (b or "").strip()
-    if pk:
-        try:
-            after = pk(cur)
-            if diff(cur, after): cur, changed = after, True
-            if changed and mode=="first_hit": return cur
-        except Exception as e: log.warning("pykospacing: %s", e)
-    if hs:
-        try:
-            res = hs.check(cur); after = res.checked if hasattr(res,"checked") else cur
-            if diff(cur, after): cur, changed = after, True
-            if changed and mode=="first_hit": return cur
-        except Exception as e: log.warning("hanspell: %s", e)
-    if lt:
-        try:
-            for m in lt.check(cur):
-                if getattr(m,"replacements",None):
-                    s,e = m.offset, m.offset+m.errorLength
-                    cur = cur[:s] + m.replacements[0] + cur[e:]
-            if diff(text,cur): changed=True
-        except Exception as e: log.warning("LanguageTool: %s", e)
-    return cur if changed else text
-
-def correct_srt_ko(text: str) -> str:
-    enabled = str(getattr(CFG,"CORRECTION_ENABLED","true")).lower() in ("1","true","yes","on")
-    if not enabled: return text
-    backends = [x.strip() for x in getattr(CFG,"CORRECTION_BACKENDS","pykospacing,hanspell,lt").split(",") if x.strip()]
-    mode     = getattr(CFG,"CORRECTION_MODE","stack")
-    out, block, state = [], [], "idle"
-    for line in text.replace("\r\n","\n").split("\n"):
-        if state=="idle":
-            out.append(line)
-            if "-->" in line: state="in"
-        else:
-            if line.strip()=="":
-                if block: out.append(correct_korean_text("\n".join(block), backends, mode)); block=[]
-                out.append(""); state="idle"
-            else:
-                block.append(line)
-    if block: out.append(correct_korean_text("\n".join(block), backends, mode))
-    return "\n".join(out)
-
 # ---------- 번역 ----------
 def _extract_dialog_lines(block: str):
     lines = block.split("\n")
@@ -237,17 +169,12 @@ def transcribe_and_translate(task_id: str, src_path: str, target_langs: List[str
         srt_ko = segments_to_srt(segments)
         save_text(tdir / "srt" / "sub_ko.srt", srt_ko)
 
-        # 2) 교정
-        _update_status(task_id,"STARTED",0.35,"Applying text correction (Korean)…")
-        srt_ko = correct_srt_ko(srt_ko)
-        save_text(tdir / "srt" / "sub_ko.srt", srt_ko)
-
-        # 3) ko.vtt
+        # 2) ko.vtt  (교정 단계 제거)
         vtt_map = {"ko": f"/vtt/{task_id}/ko"}
         save_text(tdir / "vtt" / "sub_ko.vtt", srt_to_vtt(srt_ko))
         _update_status(task_id,"STARTED",0.5,"Korean track ready", {"vtt": vtt_map})
 
-        # 4) 번역(모든 선택)
+        # 3) 번역(모든 선택)
         n = max(1, len(target_langs))
         for i, tl in enumerate(target_langs, start=1):
             prog = 0.5 + 0.49*(i/n)
@@ -274,10 +201,7 @@ def translate_srt_only(task_id: str, src_srt_path: str, src_lang: str, target_la
         srt_src = Path(src_srt_path).read_text(encoding="utf-8", errors="ignore")
         src_lang = (src_lang or "ko").lower()
 
-        if src_lang == "ko":
-            _update_status(task_id,"STARTED",0.2,"Applying text correction (Korean)…")
-            srt_src = correct_srt_ko(srt_src)
-
+        # (교정 제거) 원본 SRT를 그대로 사용
         save_text(tdir / "srt" / f"sub_{src_lang}.srt", srt_src)
         vtt_map = {src_lang: f"/vtt/{task_id}/{src_lang}"}
         save_text(tdir / "vtt" / f"sub_{src_lang}.vtt", srt_to_vtt(srt_src))

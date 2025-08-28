@@ -8,7 +8,6 @@ openai-whisper==20231117
 srt==3.5.3
 transformers==4.42.4
 sentencepiece==0.2.0
-sacremoses==0.1.1
 langdetect==1.0.9
 python-dotenv==1.0.1
 aiofiles==23.2.1

@@ -13,6 +13,7 @@ from fastapi.templating import Jinja2Templates
 from . import config as CFG
 from .glossary import Glossary
 from .tasks import transcribe_and_translate, translate_srt_only
+from fastapi import HTTPException
 
 STORAGE_ROOT = Path(getattr(CFG, "STORAGE_ROOT", "storage"))
 TASKS_DIR = STORAGE_ROOT / "tasks"
@@ -146,3 +147,39 @@ async def upload_with_srt(video: UploadFile = File(...),
     translate_srt_only.delay(task_id, str(srt_dst), _canon(srt_lang), langs)
 
     return JSONResponse({"task_id": task_id, "queued": True, "langs": langs})
+
+# SRT 블록 파서 (index, timing, text) 반환
+def _iter_srt_blocks(srt_text: str):
+    blocks = srt_text.replace("\r\n", "\n").strip().split("\n\n")
+    for b in blocks:
+        if not b.strip():
+            continue
+        lines = b.split("\n")
+        idx = None
+        i = 0
+        if lines and lines[0].strip().isdigit():
+            idx = lines[0].strip()
+            i = 1
+        if i >= len(lines) or "-->" not in lines[i]:
+            continue
+        text = "\n".join(lines[i+1:]).strip()
+        yield (idx, lines[i], text)
+
+@app.get("/glossary_srt/{task_id}/{lang}")
+def glossary_srt(task_id: str, lang: str):
+    """특정 언어 SRT를 cue 단위로 스캔하여 Glossary 항목을 한 번에 반환"""
+    lang = _canon(lang)
+    p = _task_dir(task_id) / "srt" / f"sub_{lang}.srt"
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="srt not found")
+    srt_text = p.read_text(encoding="utf-8", errors="ignore")
+
+    result = {}
+    for idx, timing, body in _iter_srt_blocks(srt_text):
+        # idx가 없으면 안전하게 연속 번호를 만들어도 되지만
+        # 우리는 위에서 VTT에 identifier 보존했으니 원칙적으로 idx가 존재
+        cue_id = idx or timing  # fallback
+        items = glossary.explain_in(body, target_lang=lang, src_lang=lang)
+        result[cue_id] = items
+
+    return JSONResponse({"items_by_id": result})

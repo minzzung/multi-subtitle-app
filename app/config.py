@@ -22,7 +22,7 @@ RESULT_BACKEND = os.getenv("RESULT_BACKEND", REDIS_URL)
 
 # ---------- Glossary CSV ----------
 # 예) data/표준단어사전_환경부표준사전_2024-11-11.csv
-GLOSSARY_CSV = os.getenv("GLOSSARY_CSV", str(BASE_DIR / "data" / "표준단어사전_환경부표준사전_2024-11-11.csv"))
+GLOSSARY_CSV = os.getenv("GLOSSARY_CSV", str(BASE_DIR / "data" / "병합_표준단어사전"))
 GLOSSARY_TERM_COL = os.getenv("GLOSSARY_TERM_COL", "표준단어명")
 GLOSSARY_DEF_COL = os.getenv("GLOSSARY_DEF_COL", "표준단어 설명")
 GLOSSARY_ENCODING = os.getenv("GLOSSARY_ENCODING", "auto")
@@ -45,9 +45,3 @@ TORCH_DEVICE = os.getenv("TORCH_DEVICE", "auto").lower()
 # auto | fp32 | fp16
 TORCH_DTYPE = os.getenv("TORCH_DTYPE", "auto").lower()
 
-# ---------- Error-correction (Korean SRT only) ----------
-CORRECTION_ENABLED = os.getenv("CORRECTION_ENABLED", "true").lower() == "true"
-# 사용할 백엔드 순서: pykospacing(오프라인) / hanspell(온라인) / lt(LanguageTool)
-CORRECTION_BACKENDS = os.getenv("CORRECTION_BACKENDS", "pykospacing,hanspell,lt")
-# stacked: 모두 적용, first_hit: 처음 바뀌는 백엔드에서 멈춤
-CORRECTION_MODE = os.getenv("CORRECTION_MODE", "stacked").lower()
