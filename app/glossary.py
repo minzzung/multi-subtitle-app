@@ -1,324 +1,218 @@
-# app/glossary.py
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Dict, Optional
-import csv
-import re
+from typing import List, Dict, Optional, Tuple
+import csv, re, sys
 
-from .utils import normalize_text, extract_nouns
 from .translation import translate_text_safe
 
-# 언어 감지(설치 안 되어 있어도 동작하도록 옵셔널)
-try:
-    from langdetect import detect as _ld_detect
-except Exception:
-    _ld_detect = None  # optional
+# ───────────────────────── Normalization ─────────────────────────
+_WS = re.compile(r"\s+")
+ENG_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9\.\-]*")
 
-
-_ws = re.compile(r"\s+")
-EN_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9\.\-]*")
-
+def _normalize_text(s: str) -> str:
+    s = (s or "").strip()
+    s = re.sub(r"[／/]", " ", s)
+    s = re.sub(r"[(){}\[\]·•∙ㆍ]", " ", s)
+    s = re.sub(r"\s+", " ", s)
+    return s
 
 def _norm_key(s: str) -> str:
-    """매칭 키: 소문자 + 공백/하이픈/점 제거"""
-    s = normalize_text(s).lower()
-    return _ws.sub("", s).replace("-", "").replace(".", "")
+    s = _normalize_text(s).lower()
+    s = _WS.sub("", s)
+    s = s.replace("-", "").replace(".", "").replace(",", "")
+    return s
 
+# ───────────────────────── Script/Lang detection ─────────────────
+# 간단/안전한 스크립트 판별(정규식): 한글/라틴/가나/가타카나/한자
+_RE_HANGUL = re.compile(r"[\uac00-\ud7a3]")
+_RE_LATIN  = re.compile(r"[A-Za-z]")
+_RE_HIRAGANA = re.compile(r"[\u3040-\u309f]")
+_RE_KATAKANA = re.compile(r"[\u30a0-\u30ff]")
+_RE_CJK     = re.compile(r"[\u4e00-\u9fff]")
 
-def _ngrams(tokens: List[str], n_min: int = 2, n_max: int = 4) -> List[str]:
-    out: List[str] = []
-    L = len(tokens)
-    for n in range(n_min, n_max + 1):
-        for i in range(L - n + 1):
-            out.append("".join(tokens[i : i + n]))
-    return out
+def detect_script_lang(s: str) -> str:
+    """문자열의 주 스크립트를 ko/en/ja/zh/other 로 추정."""
+    t = s or ""
+    # 비율로 대충 판단
+    counts = {
+        "ko": len(_RE_HANGUL.findall(t)),
+        "en": len(_RE_LATIN.findall(t)),
+        "ja": len(_RE_HIRAGANA.findall(t)) + len(_RE_KATAKANA.findall(t)),
+        "zh": len(_RE_CJK.findall(t)),
+    }
+    # 동률/전부0이면 other
+    top = max(counts, key=counts.get)
+    return top if counts[top] > 0 else "other"
 
-
+# ───────────────────────── Data model ───────────────────────────
 @dataclass
-class GlossaryEntry:
-    # CSV의 표시용(항상 한글 컬럼 기반으로 보여줌)
-    term_ko: str
-    def_ko: str
-    # 매칭 강화를 위한 보조 인덱스(영문명/약어가 CSV에 있다면 사용)
-    term_en: Optional[str] = None
-    abbr_en: Optional[str] = None
+class GlossaryItem:
+    term: str
+    term_original: str
+    definition: str
+    src_lang: str = "ko"
+    tgt_lang: str = "ko"
 
-
+# ───────────────────────── Glossary core ────────────────────────
 class Glossary:
     """
-    - 화면 표시는 항상 CSV의 '표준단어명/표준단어 설명'(한글) 기반.
-    - 매칭은 ko/en 인덱스를 모두 사용(약어는 '매칭 전용'으로만 활용, 표시엔 쓰지 않음).
+    매칭 규칙(요청사항):
+      - '동일한 언어(스크립트)'만 매칭
+        (cue 텍스트 스크립트 == 용어 스크립트 일 때만 후보)
+      - 1) 정규화 키 정확 일치
+        2) 없으면 '부분 포함' 느슨 매칭 (여전히 동일 스크립트 제한)
+      - 표시 언어는 target_lang으로 번역 (term/definition)
     """
-
-    def __init__(
-        self,
-        csv_path: Path,
-        term_col: str = "표준단어명",
-        def_col: str = "표준단어 설명",
-        base_lang: str = "ko",
-        encoding: str = "auto",
-        en_term_col: str = "표준단어 영문명",
-        en_abbr_col: str = "표준단어 영문약어명",
-    ):
-        self.csv_path = csv_path
+    def __init__(self, csv_path: Path,
+                 term_col: str = "표준단어명",
+                 def_col: str = "표준단어 설명",
+                 encoding: str = "utf-8-sig"):
+        self.csv_path = Path(csv_path)
         self.term_col = term_col
         self.def_col = def_col
-        self.base_lang = base_lang
         self.encoding = encoding
-        self.en_term_col = en_term_col
-        self.en_abbr_col = en_abbr_col
 
-        self.entries: List[GlossaryEntry] = []
-        # ko/en 각각 정규화 키 → 인덱스 리스트
-        self._index: Dict[str, Dict[str, List[int]]] = {"ko": {}, "en": {}}
+        self.rows: List[Dict[str, str]] = []                 # [{"name","desc","lang","key"}...]
+        self.idx_by_lang: Dict[str, Dict[str, List[int]]] = { # lang -> norm_key -> [idx]
+            "ko": {}, "en": {}, "ja": {}, "zh": {}, "other": {}
+        }
         self._enc_used: Optional[str] = None
-
         self._load()
 
-    # -------------------- Load & Index --------------------
-
+    # ── load CSV ────────────────────────────────────────────────
     def _load(self) -> None:
         if not self.csv_path.exists():
+            print(f"[Glossary] CSV not found: {self.csv_path}", file=sys.stderr)
             return
 
-        if self.encoding and self.encoding != "auto":
-            candidates = [self.encoding]
-        else:
-            candidates = ["utf-8-sig", "utf-8", "cp949", "ms949", "euc-kr"]
-
-        rows: List[Dict[str, str]] = []
-        last_err: Optional[Exception] = None
-        for enc in candidates:
+        tried = []
+        for enc in (self.encoding, "utf-8-sig", "utf-8", "cp949"):
+            if not enc:
+                continue
             try:
                 with self.csv_path.open("r", encoding=enc, newline="") as f:
-                    r = csv.DictReader(f)
-                    for row in r:
-                        rows.append(row)
-                self._enc_used = enc
-                break
+                    rd = csv.DictReader(f)
+                    fields = [c.strip() for c in (rd.fieldnames or [])]
+                    cols = {c: c for c in fields}
+
+                    term_key = (
+                        cols.get(self.term_col) or cols.get("용어") or cols.get("term")
+                        or cols.get("표준단어명") or (fields[0] if fields else None)
+                    )
+                    def_key  = (
+                        cols.get(self.def_col)  or cols.get("설명") or cols.get("definition")
+                        or cols.get("표준단어 설명") or (fields[-1] if fields else None)
+                    )
+                    if not term_key:
+                        raise RuntimeError("No term column detected")
+
+                    self.rows.clear()
+                    for d in self.idx_by_lang.values():
+                        d.clear()
+
+                    for i, row in enumerate(rd):
+                        name = (row.get(term_key) or "").strip()
+                        if not name:
+                            continue
+                        desc = (row.get(def_key) or "").strip() if def_key else ""
+                        lang = detect_script_lang(name)
+                        key  = _norm_key(name)
+                        self.rows.append({"name": name, "desc": desc, "lang": lang, "key": key})
+                        if key:
+                            self.idx_by_lang.setdefault(lang, {}).setdefault(key, []).append(i)
+
+                    self._enc_used = enc
+                    print(f"[Glossary] Loaded {len(self.rows)} rows from {self.csv_path} (encoding={enc})")
+                    return
             except Exception as e:
-                last_err = e
-                continue
+                tried.append(f"{enc}: {e}")
 
-        if not rows:
-            raise RuntimeError(
-                f"Failed to read CSV '{self.csv_path}'. Last error={last_err}"
-            )
+        print(f"[Glossary] Failed to load CSV: {self.csv_path} | tried={tried}", file=sys.stderr)
 
-        for row in rows:
-            ko = (row.get(self.term_col) or "").strip()
-            if not ko:
-                continue
-            ko_def = (row.get(self.def_col) or "").strip()
-            en = (row.get(self.en_term_col) or "").strip()
-            abbr = (row.get(self.en_abbr_col) or "").strip()
-
-            e = GlossaryEntry(
-                term_ko=ko,
-                def_ko=ko_def,
-                term_en=en or None,
-                abbr_en=abbr or None,
-            )
-            idx = len(self.entries)
-            self.entries.append(e)
-
-            # ko 인덱스
-            key_ko = _norm_key(ko)
-            if key_ko:
-                self._index["ko"].setdefault(key_ko, []).append(idx)
-
-            # en 인덱스(영문명/약어 모두 키로만 활용)
-            for src in (en, abbr):
-                if src:
-                    self._index["en"].setdefault(_norm_key(src), []).append(idx)
-
-    # -------------------- Matching --------------------
-
-    def _match_ko(self, text_ko: str) -> List[int]:
-        hits: List[int] = []
-        seen: set[int] = set()
-
-        toks_all = extract_nouns(text_ko, lang="ko")
-        toks = [t for t in toks_all if re.fullmatch(r"[가-힣]{2,}", t)]
-
-        # 1-그램
+    # ── candidate keys by text (same-script only later) ────────
+    def _candidate_keys(self, text: str) -> List[str]:
+        text = _normalize_text(text or "")
+        if not text:
+            return []
+        toks: List[str] = []
+        toks += [t for t in re.split(r"\s+", text) if t]
+        toks += [m.group(0) for m in ENG_TOKEN.finditer(text)]
+        keys = set()
         for t in toks:
-            for idx in self._index["ko"].get(_norm_key(t), []):
-                if idx not in seen:
-                    seen.add(idx)
-                    hits.append(idx)
+            keys.add(_norm_key(t))
+        for n in (2, 3, 4):
+            for i in range(0, max(0, len(toks) - n + 1)):
+                keys.add(_norm_key("".join(toks[i:i+n])))
+        keys = {k for k in keys if len(k) >= 2}
+        return list(keys)
 
-        # 2~4-그램
-        for phrase in _ngrams(toks, 2, 4):
-            for idx in self._index["ko"].get(_norm_key(phrase), []):
-                if idx not in seen:
-                    seen.add(idx)
-                    hits.append(idx)
-
-        return hits
-
-    def _match_en(self, text_en: str) -> List[int]:
-        hits: List[int] = []
-        seen: set[int] = set()
-
-        toks = [m.group(0).lower() for m in EN_TOKEN_RE.finditer(text_en)]
-        STOP = {
-            "the",
-            "a",
-            "an",
-            "and",
-            "or",
-            "but",
-            "for",
-            "nor",
-            "with",
-            "from",
-            "into",
-            "onto",
-            "over",
-            "under",
-            "between",
-            "to",
-            "of",
-            "in",
-            "on",
-            "at",
-            "by",
-            "as",
-            "is",
-            "are",
-            "was",
-            "were",
-            "be",
-            "been",
-            "being",
-            "this",
-            "that",
-            "these",
-            "those",
-            "it",
-            "its",
-            "you",
-            "your",
-            "i",
-            "we",
-            "they",
-            "he",
-            "she",
-            "them",
-            "his",
-            "her",
-            "our",
-            "their",
-            "so",
-            "then",
-            "than",
-        }
-        toks = [t for t in toks if len(t) >= 2 and t not in STOP]
-
-        for t in toks:
-            for idx in self._index["en"].get(_norm_key(t), []):
-                if idx not in seen:
-                    seen.add(idx)
-                    hits.append(idx)
-
-        for phrase in _ngrams(toks, 2, 4):
-            for idx in self._index["en"].get(_norm_key(phrase), []):
-                if idx not in seen:
-                    seen.add(idx)
-                    hits.append(idx)
-
-        return hits
-
-    def _try_match(self, text: str, src_lang: Optional[str]) -> List[int]:
+    # ── main API ────────────────────────────────────────────────
+    def explain_in(self, text: str, target_lang: str = "ko",
+                   src_lang: Optional[str] = None, limit: int = 20) -> List[dict]:
         """
-        src_lang이 주어지면 우선 해당 언어 로직으로,
-        없으면 langdetect로 추정 → en 피벗 → ko 피벗 순서로 안전 매칭.
+        text(현재 자막 문장)의 스크립트를 추정(또는 src_lang 사용)해서
+        '같은 스크립트'의 용어만 대상으로 매칭.
+        출력은 target_lang으로 번역(표시 목적).
         """
-        s = (src_lang or "").strip().lower()
+        target_lang = (target_lang or "ko").lower()
+        text_lang = (src_lang or detect_script_lang(text or "")).lower()
+        if text_lang not in self.idx_by_lang:
+            text_lang = "other"
 
-        # 0) 자동 감지
-        if not s and _ld_detect:
-            try:
-                s = (_ld_detect(text) or "").lower()
-            except Exception:
-                s = ""
+        out: List[GlossaryItem] = []
+        seen = set()
 
-        # 1) ko/en 빠른 경로
-        if s.startswith("ko"):
-            m = self._match_ko(text)
-            if m:
-                return m
-        if s.startswith("en"):
-            m = self._match_en(text)
-            if m:
-                return m
-
-        # 2) en으로 번역해서 en 매칭
-        try:
-            text_en = translate_text_safe([text], s or "ko", "en")[0]
-            m = self._match_en(text_en)
-            if m:
-                return m
-        except Exception:
-            pass
-
-        # 3) ko로 번역해서 ko 매칭
-        try:
-            text_ko = translate_text_safe([text], s or "en", "ko")[0]
-            m = self._match_ko(text_ko)
-            if m:
-                return m
-        except Exception:
-            pass
-
-        return []
-
-    # -------------------- Public API --------------------
-
-    def explain_in(
-        self, text: str, target_lang: str, src_lang: Optional[str] = None
-    ) -> List[Dict[str, str]]:
-        """
-        text    : 현재 화면에 재생 중인 '자막 한 덩어리'
-        src_lang: 위 text의 언어(없으면 자동 감지)
-        target_lang: 화면에 표시할 언어(ko면 원문 그대로, 그 외엔 ko→target 번역)
-        """
-        idxs = self._try_match(text, src_lang)
-
-        out: List[Dict[str, str]] = []
-        seen: set[str] = set()
-
-        for idx in idxs:
-            e = self.entries[idx]
-
-            # 화면 표시는 항상 CSV의 한글 열 기반
-            if target_lang == "ko":
-                term_disp = e.term_ko
-                def_disp = e.def_ko
-            else:
-                term_disp = translate_text_safe([e.term_ko], "ko", target_lang)[0]
-                def_disp = (
-                    translate_text_safe([e.def_ko], "ko", target_lang)[0]
-                    if e.def_ko
-                    else ""
-                )
-
-            # 중복 방지
-            k = _norm_key(term_disp)
-            if k in seen:
+        # 1) 정규화 키 정확 일치 (same-script dict만 사용)
+        cand = self._candidate_keys(text)
+        idx_map = self.idx_by_lang.get(text_lang, {})
+        for k in cand:
+            if not k or k in seen:
                 continue
             seen.add(k)
+            for i in idx_map.get(k, []):
+                row = self.rows[i]
+                disp_term, disp_def = self._display_pair(row["name"], row["desc"], row["lang"], target_lang)
+                out.append(GlossaryItem(
+                    term=disp_term, term_original=row["name"],
+                    definition=disp_def, src_lang=row["lang"], tgt_lang=target_lang
+                ))
+                if len(out) >= limit:
+                    break
+            if len(out) >= limit:
+                break
 
-            out.append(
-                {
-                    "term": term_disp,             # (표시) 대상 언어
-                    "term_original": e.term_ko,    # (원문) 한글
-                    "base_lang": "ko",
-                    "definition": def_disp,        # (표시) 대상 언어
-                }
-            )
+        if out:
+            return [o.__dict__ for o in out]
 
-        return out
+        # 2) 부분 포함 느슨 매칭 (여전히 same-script로만)
+        text_norm = _norm_key(text)
+        if not text_norm:
+            return []
+        for i, row in enumerate(self.rows):
+            if row["lang"] != text_lang:
+                continue
+            key = row["key"]
+            if key and key in text_norm:
+                disp_term, disp_def = self._display_pair(row["name"], row["desc"], row["lang"], target_lang)
+                out.append(GlossaryItem(
+                    term=disp_term, term_original=row["name"],
+                    definition=disp_def, src_lang=row["lang"], tgt_lang=target_lang
+                ))
+                if len(out) >= limit:
+                    break
+
+        return [o.__dict__ for o in out]
+
+    # ── translate-for-display helper ────────────────────────────
+    def _display_pair(self, name: str, desc: str, name_lang: str, target_lang: str) -> Tuple[str, str]:
+        """표시 언어(target_lang)로 변환. 실패 시 원문 그대로."""
+        if (target_lang or "ko").lower() == (name_lang or "ko").lower():
+            return name, desc
+        try:
+            name_t = translate_text_safe(name, name_lang, target_lang)
+            desc_t = translate_text_safe(desc, name_lang, target_lang) if desc else desc
+            return name_t, (desc_t or "")
+        except Exception:
+            return name, desc
